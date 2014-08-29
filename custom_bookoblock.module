@@ -5,6 +5,25 @@
  * menu item that is part of a book.
  */
 
+function custom_bookoblock_menu() {
+  $items = array();
+  $items['csc-mail/ajax'] = array(
+    'page callback' => 'custom_bookoblock_callback',
+    'page arguments' => array(1),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    );
+  $items['admin/csc-bookoblock'] = array(
+    'title' => 'Custom Book Outline Setting Page',
+    'description' => 'Enter the setting for the Book Outline page',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('custom_bookoblock_admin'),
+    'access arguments' => TRUE,
+    'type' => MENU_NORMAL_ITEM,
+    );
+  return $items;
+}
+
 /**
  * Implements hook_block_info().
  *
@@ -27,6 +46,8 @@ function custom_bookoblock_block_info() {
  */
 function custom_bookoblock_block_view() {
   global $base_url;
+  ctools_include('modal');
+  ctools_modal_add_js();
   if ($book = custom_bookoblock_is_book_node()) {
     // menu_build_tree() doesn't accept zero for depth, so we convert that to
     // NULL and add 1 if it's not 0 to account for the first (skipped) level.
@@ -50,10 +71,9 @@ function custom_bookoblock_block_view() {
       $mlid = custom_bookblock_query($key);
       $html .= '<a href="'.$base_url.'/node/'.$mlid.'">'.$value.'</a><br>';
     }
-    
     $block['content'] = $html;
-    //print_r($block['content']);exit();
-
+    $block['content'] .= '<br><br>';
+    $block['content'] .= _custom_bookoblock_make_link('Send A Feedback');
     return $block;
   }
   // If the current node isn't part of a book, just return nothing.
@@ -99,11 +119,26 @@ function custom_bookoblock_is_book_node() {
   return FALSE;
 }
 
+/**
+  * Implementation of the callback function for the admin settings form
+  *
+  */
+function custom_bookoblock_admin() {
+  $form = array();
+  $form['bookoblock_admin_email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Enter the CSC Page admin email'),
+    '#default_value' => variable_get('bookoblock_admin_email', NULL),
+    '#required' => TRUE,
+    );
+  return system_settings_form($form);
+}
+
 
 /**
   * Queries the database to get the node ids for corresponding mlid.
   *
-  * @return nid  
+  * @return nid 
   */
 function custom_bookblock_query ($mlid) {
   $select = db_select('book', 'b')
@@ -112,3 +147,101 @@ function custom_bookblock_query ($mlid) {
     $mlid = $select->execute()->fetchField();
     return $mlid;
 }
+
+
+/**
+ * Helper function to make a link.
+ */
+function _custom_bookoblock_make_link($link_text = '') {
+  // Set a default value if no text in supplied.
+  // if (empty($link_text)) {
+  //   $link_text = 'Magical Modal';
+  // }
+ 
+  return '<div id="magical-modal-link">' . l($link_text, 'csc-mail/nojs', array('attributes' => array('class' => 'ctools-use-modal'))) . '</div>';
+}
+
+/**
+  *Ajax menu callback
+  *
+  */
+function custom_bookoblock_callback($ajax) {
+  if($ajax) {
+    ctools_include('ajax');
+    ctools_include('modal');
+    $page_url = $_SERVER['HTTP_REFERER'];
+    $form_state = array(
+      'ajax' => TRUE,
+      'title' => t('CSC Send Mail Form'),
+      'page_url' => $page_url,
+      );
+    $output = ctools_modal_form_wrapper('custom_bookoblock_cscmail_form', $form_state);
+
+    if(!empty($form_state['ajax_commands'])) {
+      $output = $form_state['ajax_commands'];
+    }
+
+    print ajax_render($output);
+    drupal_exit();
+  }
+  else {
+    return drupal_get_form('custom_bookoblock_cscmail_form');
+  }
+}
+
+function custom_bookoblock_cscmail_form($form, $form_state) {
+  $form = array();
+
+  $form['cscmail_text'] = array(
+    '#type' => 'textarea',
+    '#title' => 'Please Enter Your Queries',
+    );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Send'),
+    );
+  return $form;
+}
+
+function custom_bookoblock_cscmail_form_submit($form, &$form_state) {
+  global $user;
+  $page_url = $form_state['page_url'];
+  $params['account'] = $user;
+  $mail_text = $form_state['input']['cscmail_text'];
+  $mail_to = variable_get('bookoblock_admin_email');
+  $subject = 'Feedback form for CSC documents';
+  $headers = "MIME-Version: 1.0" . "\r\n";
+  $headers .= "Content-type:text/html;charset=iso-8859-1" . "\r\n";
+  $headers .= 'From: ' . $from . "\r\n";
+  $headers .= 'Reply-To: ' .$from . "\r\n";
+  $headers .= 'X-Mailer: PHP/' . phpversion();
+  $message = '<p>Hi</p>,<br>
+  <p>There is a Feedback form submission by the user <b>'.$user->name.'</b> from the page <b>'.$page_url.'</b>.<br>
+  The user says "<p><i>'.$mail_text.'</i></p>".';
+
+  $sent_mail = mail($mail_to, $subject, $message, $headers);
+  //print_r($a);
+  $form_state['ajax_commands'][] = ctools_modal_command_dismiss();
+  if ($sent_mail) {
+    drupal_set_message('Mail sent');
+  }
+  else
+  {
+    drupal_set_message('Mail not sent');
+  }
+  //drupal_mail('cscmail', 'custom_bookoblock', $mail_to, user_preferred_language($user), $params);
+  
+}
+
+// function cscmail_mail($key, &$message, $params) {
+//   $data['user'] = $params['account'];
+//   $options['language'] = $message['language'];
+//   user_mail_tokens($variables, $data, $options);
+//   switch($key) {
+//     case 'custom_bookoblock':
+//       $language = $message['language']->language;
+//       $message['subject'] = t('CSC Customer Feedback');
+//       $message['body'][] = t("There is a new feedback form submited by a !username", $variables);
+//       break;
+//   }
+// }
